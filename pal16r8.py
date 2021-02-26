@@ -113,6 +113,25 @@ class PAL16R8SReader:
         # self.tl.io_w(pin20s_to_ez([P_CLK, P_OEn]))
         self.tl.vdd_en()
 
+    def quick_reset(self):
+        """
+        # Cut power, ground rail
+        self.tl.vdd_pins(0)
+        self.tl.vdd_en(False)
+        self.tl.io_w(0)
+        self.tl.io_tri(0)
+        self.tl.gnd_pins(0xFFFFFFFFFF)
+        time.sleep(0.1)
+        self.tl.io_tri(0xFFFFFFFFFF)
+        self.tl.gnd_pins(0)
+        self.reset()
+        """
+        # Cut power, ground rail briefly
+        self.tl.vdd_pins(0)
+        self.tl.gnd_pins(dip20s_to_zif([P_VCC, P_GND]))
+        self.tl.gnd_pins(dip20s_to_zif([P_GND]))
+        self.tl.vdd_pins(dip20s_to_zif([P_VCC]))
+
     def sweep_combclk(self, clk):
         """
         Read every address and return the resulting data
@@ -150,30 +169,22 @@ class PAL16R8SReader:
         """Reset if FFs are in target state"""
         iref, oref = parents[-1]
         now = self.wr_clk(iref)
-        print("state_reset(): wanted 0x%02X => 0x%02X, got 0x%02X" % (iref, oref, now))
+        print("  state_reset(): wanted 0x%02X => 0x%02X, got 0x%02X" % (iref, oref, now))
         if now == oref:
             return
 
-        print("state_reset() running")
+        print("    state_reset() running")
+        self.quick_reset()
 
-        # Cut power, ground rail
-        self.tl.vdd_pins(0)
-        self.tl.vdd_en(False)
-        self.tl.io_w(0)
-        self.tl.io_tri(0)
-        self.tl.gnd_pins(0xFFFFFFFFFF)
-        time.sleep(0.1)
-        self.tl.io_tri(0xFFFFFFFFFF)
-        self.tl.gnd_pins(0)
-        self.reset()
 
         # Now walk state to get back to original
-        for stepi, (iref, oref) in parents:
+        for stepi, (iref, oref) in enumerate(parents):
             # Power on
             if stepi == 0:
                 out = self.wr_clk(iref, False)
             else:
                 out = self.wr_clk(iref, True)
+            print("    state_reset(): %u 0x%02X => 0x%02X, got 0x%02X" % (stepi, iref, oref, out))
             if oref != out:
                 print(parents)
                 print(stepi, iref, oref)
@@ -192,19 +203,33 @@ class PAL16R8SReader:
         print("Parents (%u)" % len(parents))
         for parent in parents:
             print("  ", parent)
-        for addr in range(WORDS):
+        pending_recurse = {}
+        if 0 and len(parents) == 1:
+            itr = [0xA7]
+        else:
+            itr = range(WORDS)
+        for addr in itr:
             print("Addr 0x%02X" % (addr,))
             self.state_reset(parents)
             word_comb = self.wr_clk(addr, False)
-            word_clk = self.wr_clk(addr, True)
-            ret.append((addr, word_comb, word_clk))
-            if 1 and word_clk not in found_states:
-                found_states.add(word_clk)
-                print("")
-                print("Recursing on (0x%02X, 0x%02X)" % (addr, word_clk))
-                child_parents = parents + [(addr, word_clk)]
-                ret += self.recursive_solver(found_states=found_states, parents=child_parents)
-                print("Returned, depth now %u" % len(parents))
+            word_clkp = self.wr_clk(addr, True)
+            # Falling clock edge shouldn't change logic
+            word_clkn = self.wr_clk(addr, False)
+            print("  addr 0x%02X: comb 0x%02X, clkp 0x%02X, clkn 0x%02X, change %u" % (addr, word_comb, word_clkp, word_clkn, word_comb != word_clkp))
+            if word_clkp != word_clkn:
+                raise Exception("Bad clock transition")
+            ret.append((addr, word_comb, word_clkp))
+            if word_clkp not in found_states:
+                found_states.add(word_clkp)
+                pending_recurse[word_clkp] = addr
+
+        print("Checking %u pending recursions" % len(pending_recurse))
+        for iteri, (word_clk, addr) in enumerate(pending_recurse.items()):
+            print("")
+            print("Recursing on %u / %u (0x%02X, 0x%02X)" % (iteri + 1, len(pending_recurse), addr, word_clk))
+            child_parents = parents + [(addr, word_clk)]
+            ret += self.recursive_solver(found_states=found_states, parents=child_parents)
+            print("Returned, depth now %u" % len(parents))
 
         return ret
 
