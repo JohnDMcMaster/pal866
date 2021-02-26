@@ -300,7 +300,10 @@ class PAL16XXReader:
                 f = open(fnout, "w")
                 jheader = {
                     "part": self.part,
-                    "words": self.WORDS,
+                    "address_bits": len(self.A_LINES),
+                    "address_words": 1 << len(self.A_LINES),
+                    "data_bits": len(self.D_LINES),
+                    "data_words": 1 << len(self.D_LINES),
                     "pins": {
                         "CLK": self.P_CLK,
                         "OEn": self.P_OEn,
