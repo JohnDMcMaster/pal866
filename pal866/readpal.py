@@ -78,6 +78,7 @@ class Package:
         # print("I_LINES: %s" % (self.addr_pins,))
         # print("O_LINES: %s" % (self.data_pins,))
 
+    """
     def calculate_io(self, opins=[]):
         self.addr_pins = list(self.addr_pins_base)
         self.data_pins = list(self.data_pins_base)
@@ -90,6 +91,7 @@ class Package:
         self.data_pins = sorted(self.data_pins)
         self.verbose and print("i/o I: ", self.addr_pins)
         self.verbose and print("i/o O: ", self.data_pins)
+    """
 
 """
 LSB first
@@ -149,11 +151,21 @@ class DataBus:
         return self.ez2data(self.pack.tl.io_r())
 
 
+    def read_all(self, verbose=True):
+        ret = bytearray()
+        verbose and print("Reading %u words" % self.words())
+        for addr in range(self.words()):
+            if addr % (self.words() // 100) == 0:
+                verbose and print("%0.1f%%" % (addr / self.words() * 100.0,))
+            self.addr(addr)
+            ret.append(self.read())
+        return ret
+
 class Readpal:
-    def __init__(self, tl, input_pins=[], verbose=False):
+    def __init__(self, tl, verbose=False):
         self.verbose = verbose
         self.tl = tl
-        self.pack = Package(tl, verbose=self.verbose)
+        self.pack = Package(self.tl, verbose=self.verbose)
         self.db = DataBus(self.pack,
                           addr_pins=self.pack.addr_pins,
                           data_pins=self.pack.data_pins,
@@ -296,3 +308,49 @@ class Readpal:
             print("status:", s)
 
         return ret
+
+    def read_eprom_ios(self):
+        """
+        Determine IOs and then only read that combination
+        """
+        j = self.detect_ios()
+
+        for pinj in j["pins"].values():
+            # Only handle trivial cases
+            assert pinj["status"] in "io"
+
+        """
+        Create a new address map
+        Base off of existing and then strip out unused bits
+
+        Two choices to drive address lines on confirmed inputs:
+        -Directly via pin
+        -Indirectly via PU/PD
+        """
+
+        pal_addr_pins = list(self.db.addr_pins)
+        pal_data_pins = list(self.db.data_pins)
+        for _data_pini, pins in enumerate(j["pin_table"]):
+            pal_pin, eprom_d_pin, eprom_pupd_pin = pins
+            status = j["pins"][pal_pin]["status"]
+            # Input => eliminate unused output pin
+            if status == "i":
+                pal_data_pins.remove(eprom_d_pin)
+                # Optionally could remove the eprom_pupd_pin and add the eprom_d_pin to the address bus
+                # something like
+                # pal_addr_pins.replace(eprom_pupd_pin, eprom_d_pin)
+            # Remove unused PU/PD pins
+            elif status == "o":
+                pal_addr_pins.remove(eprom_pupd_pin)
+
+        # recalcualte new data bus
+        palpack = Package(self.tl, verbose=self.verbose)
+        palpack.data_pins = pal_data_pins
+        palpack.addr_pins = pal_addr_pins
+        paldb = DataBus(palpack,
+                          addr_pins=pal_addr_pins,
+                          data_pins=pal_data_pins,
+                          verbose=self.verbose)
+        palpack.setup_pins()
+        buf = paldb.read_all()
+        return buf, j
