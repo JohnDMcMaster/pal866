@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
 """
+FIXME: is the I/O tristate set correctly?
+if not, how did this code work in the first place?
+Probably b/c I did trivial case that didn't adjust for I/O changes?
+
 Focus on PAL16R8 for now
 20-Pin Medium PAL Family Block Diagram
 Collects data to be crunched into equations / JED
